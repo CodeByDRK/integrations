@@ -233,6 +233,5 @@ function renderSuccessHtml() {
         <script>setTimeout(() => window.close(), 5000);</script>
       </body>
     </html>
-  `
+  `;
 }
-

@@ -5,6 +5,7 @@ import { stackServerApp } from "@/stack"
 export async function GET() {
   const user = await stackServerApp.getUser()
   if (!user) {
+    console.error("Unauthorized: No user found")
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -13,8 +14,16 @@ export async function GET() {
   const redirectUri = process.env.GOOGLESHEETS_REDIRECT_URI
   const scope = "https://www.googleapis.com/auth/spreadsheets.readonly"
 
+  console.log("Environment variables check:", {
+    clientId: clientId ? "Set" : "Missing",
+    redirectUri: redirectUri ? "Set" : "Missing",
+  })
+
   if (!clientId || !redirectUri) {
-    console.error("Missing required environment variables")
+    console.error("Missing required environment variables:", {
+      clientId: !clientId,
+      redirectUri: !redirectUri,
+    })
     return NextResponse.json({ message: "Server configuration error" }, { status: 500 })
   }
 
@@ -29,6 +38,8 @@ export async function GET() {
   authUrl.searchParams.append("access_type", "offline")
   authUrl.searchParams.append("prompt", "consent")
   authUrl.searchParams.append("state", state)
+
+  console.log("Redirecting to Google OAuth URL:", authUrl.toString())
 
   return NextResponse.redirect(authUrl.toString())
 }

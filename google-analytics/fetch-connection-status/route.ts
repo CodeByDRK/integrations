@@ -4,19 +4,22 @@ import { stackServerApp } from "@/stack"
 
 export async function GET() {
   try {
+    console.log("Fetching Google Analytics integration connection status...")
     const user = await stackServerApp.getUser()
     if (!user) {
+      console.log("User not authenticated")
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
     const userId = user.id
+    console.log("User ID:", userId)
 
+    console.log("Querying database for Google Analytics integration status...")
     const integration = await prisma.integration.findFirst({
       where: {
         userId,
-        integrationType: "GOOGLE_SHEETS",
+        integrationType: "GOOGLE_ANALYTICS",
       },
       select: {
-        integrationData: true,
         connectedStatus: true,
         createdAt: true,
         updatedAt: true,
@@ -24,19 +27,19 @@ export async function GET() {
     })
 
     if (!integration) {
-      return NextResponse.json({ message: "Google Sheets integration not found" }, { status: 404 })
+      console.log("Google Analytics integration not found for user")
+      return NextResponse.json({ message: "Google Analytics integration not found" }, { status: 404 })
     }
 
+    console.log("Google Analytics integration status found")
+
     return NextResponse.json({
-      integration: {
-        integrationData: integration.integrationData,
-        connectedStatus: integration.connectedStatus,
-        createdAt: integration.createdAt,
-        updatedAt: integration.updatedAt,
-      },
+      connectedStatus: integration.connectedStatus,
+      createdAt: integration.createdAt,
+      updatedAt: integration.updatedAt,
     })
   } catch (error) {
-    console.error("Error fetching Google Sheets integration data:", error)
+    console.error("Error fetching Google Analytics integration status:", error)
     return NextResponse.json({ message: "Internal Server Error", details: (error as Error).message }, { status: 500 })
   }
 }

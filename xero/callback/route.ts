@@ -106,7 +106,7 @@ export async function GET(req: NextRequest) {
           refreshToken: encrypt(refresh_token),
           tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
           tenantId,
-          connectedStatus: true,
+          connectedStatus: true, // Set connectedStatus to true
         },
       })
     } else {
@@ -118,22 +118,28 @@ export async function GET(req: NextRequest) {
           refreshToken: encrypt(refresh_token),
           tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
           tenantId,
-          connectedStatus: true,
+          connectedStatus: true, // Set connectedStatus to true
           updatedAt: new Date(),
         },
       })
     }
 
-    // Fetch and store financial data
+    // Attempt to fetch and store financial data
+    let fetchErrorMessage = null
     try {
       await fetchAndStoreXeroFinancialData(userId, access_token, tenantId)
       console.log("Successfully fetched and stored financial data")
-    } catch (error) {
-      console.error("Error fetching financial data:", error)
-      // Continue with the flow even if financial data fetching fails
+    } catch (fetchError) {
+      console.error("Error fetching financial data:", fetchError)
+      fetchErrorMessage = "Error fetching financial data, but the connection was successful."
     }
 
-    return new NextResponse(renderSuccessHtml(), {
+    // Return a response with the fetch error message if there was one
+    const successMessage = fetchErrorMessage
+      ? `<html><body><div>Xero connected successfully, but there was an error fetching financial data: ${fetchErrorMessage}</div></body></html>`
+      : `<html><body><div>Xero connected successfully</div></body></html>`
+
+    return new NextResponse(successMessage, {
       headers: { "Content-Type": "text/html" },
     })
   } catch (error: any) {
@@ -147,15 +153,3 @@ export async function GET(req: NextRequest) {
     )
   }
 }
-
-function renderSuccessHtml() {
-  return `
-    <html>
-      <body>
-        <div>Xero connected</div>
-        <script>setTimeout(() => window.close(), 5000);</script>
-      </body>
-    </html>
-  `
-}
-

@@ -9,7 +9,7 @@ export async function GET() {
   }
 
   const userId = user.id
-  const clientId = process.env.SLACK_INTEGRATION_CLIENT_SECRET
+  const clientId = process.env.SLACK_INTEGRATION_CLIENT_ID
   const redirectUri = process.env.SLACK_INTEGRATION_REDIRECT_URI
   const scope = "channels:read,chat:write,team:read,users:read"
 

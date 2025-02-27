@@ -1,10 +1,10 @@
-import { NextResponse } from "next/server"
-import axios from "axios"
-import prisma from "@/lib/prisma"
-import { encrypt } from "../../utils/encryption"
-import { stackServerApp } from "@/stack"
+import { type NextRequest, NextResponse } from "next/server";
+import axios from "axios";
+import prisma from "@/lib/prisma";
+import { encrypt } from "../../utils/encryption";
+import { stackServerApp } from "@/stack";
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const user = await stackServerApp.getUser();
   if (!user) {
     console.error("Unauthorized: No user found");
@@ -12,23 +12,27 @@ export async function GET(req: Request) {
   }
 
   const userId = user.id;
-  const url = new URL(req.url);
-  const error = url.searchParams.get("error");
-  const authCode = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
+  const searchParams = req.nextUrl.searchParams;
+  const error = searchParams.get("error");
+  const authCode = searchParams.get("code");
+  const state = searchParams.get("state");
+
+  console.log("Received OAuth Parameters:", { authCode, state });
 
   if (error) {
+    console.error("OAuth Error:", error, searchParams.get("error_description"));
     return NextResponse.json(
       {
         message: "Authorization Error",
         error,
-        error_description: url.searchParams.get("error_description"),
+        error_description: searchParams.get("error_description"),
       },
-      { status: 400 },
+      { status: 400 }
     );
   }
 
   if (!authCode || !state) {
+    console.error("Missing required parameters: authCode or state is null");
     return NextResponse.json({ message: "Missing required parameters" }, { status: 400 });
   }
 
@@ -38,43 +42,35 @@ export async function GET(req: Request) {
     const clientId = process.env.GOOGLEANALYTICS_INTEGRATION_CLIENT_ID;
     const clientSecret = process.env.GOOGLEANALYTICS_INTEGRATION_CLIENT_SECRET;
 
+    console.log("Environment Variables Check:", {
+      redirectUri,
+      clientId,
+      clientSecret: clientSecret ? "Exists" : "Missing",
+    });
+
     if (!redirectUri || !clientId || !clientSecret) {
       throw new Error("Missing required environment variables");
     }
 
-    const tokenResponse = await axios.post(
-      tokenUrl,
-      {
-        code: authCode,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
-        grant_type: "authorization_code",
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-        },
-      },
-    );
+    console.log("Sending token request to Google Analytics with:", {
+      grant_type: "authorization_code",
+      code: authCode,
+      redirect_uri: redirectUri,
+      client_id: clientId,
+      client_secret: clientSecret,
+    });
+
+    const tokenResponse = await axios.post(tokenUrl, {
+      grant_type: "authorization_code",
+      code: authCode,
+      redirect_uri: redirectUri,
+      client_id: clientId,
+      client_secret: clientSecret,
+    });
+
+    console.log("Token Response Data:", tokenResponse.data);
 
     const { access_token, refresh_token, expires_in } = tokenResponse.data;
-
-    // Replace YOUR_PROPERTY_ID with a valid GA4 property ID
-    const propertyId = "YOUR_PROPERTY_ID"; // Replace this with your actual GA4 property ID
-
-    // Fetch Google Analytics data using the runReport endpoint
-    const analyticsResponse = await axios.post(
-      `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
-      {
-        dateRanges: [{ startDate: "2023-01-01", endDate: "2023-12-31" }],
-        dimensions: [{ name: "country" }],
-        metrics: [{ name: "activeUsers" }],
-      },
-      {
-        headers: { Authorization: `Bearer ${access_token}` },
-      },
-    );
 
     let integration = await prisma.integration.findFirst({
       where: { userId, integrationType: "GOOGLE_ANALYTICS" },
@@ -88,7 +84,6 @@ export async function GET(req: Request) {
           refreshToken: encrypt(refresh_token),
           tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
           connectedStatus: true,
-          integrationData: analyticsResponse.data,
         },
       });
     } else {
@@ -105,7 +100,8 @@ export async function GET(req: Request) {
       });
     }
 
-    return new NextResponse(renderSuccessHtml(), {
+    const successMessage = `<html><body><div>Google Analytics connected successfully</div></body></html>`;
+    return new NextResponse(successMessage, {
       headers: { "Content-Type": "text/html" },
     });
   } catch (error: any) {
@@ -115,18 +111,7 @@ export async function GET(req: Request) {
         message: "Error processing request",
         details: error.response?.data || error.message || "Unknown error occurred",
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
-}
-
-function renderSuccessHtml() {
-  return `
-    <html>
-      <body>
-        <div>Google Analytics connected successfully</div>
-        <script>setTimeout(() => window.close(), 5000);</script>
-      </body>
-    </html>
-  `;
 }

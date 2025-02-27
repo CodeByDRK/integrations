@@ -1,154 +1,96 @@
-import axios from "axios"
-import prisma from "@/lib/prisma"
-import { decrypt, encrypt } from "../../utils/encryption"
+import axios from "axios";
+import prisma from "@/lib/prisma";
 
 export async function fetchAndStoreHubSpotData(userId: string, accessToken: string, hub_id: any) {
   try {
-    console.log("Fetching HubSpot data for user:", userId)
+    console.log("Fetching HubSpot data for user:", userId);
 
+    // Fetch referral rate, demos, lead conversions, and commissions
+    const referralRate = await fetchHubSpotReferralRate(accessToken);
+    const demos = await fetchHubSpotDemos(accessToken);
+    const leadConversions = await fetchHubSpotLeadConversions(accessToken);
+    const commissions = await fetchHubSpotCommissions(accessToken);
+
+    // Generate financial metrics data
+    const startDate = new Date(getStartDate(90)); // Last 90 days
+    const endDate = new Date(getCurrentDate());
+    const hubSpotData = calculateHubSpotMetrics(startDate, endDate, referralRate, demos, leadConversions, commissions);
+
+    // Find the integration record for the user
     const integration = await prisma.integration.findFirst({
       where: { userId, integrationType: "HUBSPOT" },
-    })
+    });
 
-    if (!integration) {
-      console.error("No integration record found for user:", userId)
-      return
-    }
-
-    // Refresh the token if expired
-    const now = new Date()
-    if (integration.tokenExpiresAt && integration.tokenExpiresAt < now) {
-      console.log("Access token expired. Refreshing...")
-
-      if (!integration.refreshToken) {
-        throw new Error("Refresh token is missing. Unable to refresh access token.")
-      }
-
-      const newTokens = await refreshHubSpotToken(integration.refreshToken)
-      accessToken = newTokens.access_token
-
+    if (integration) {
       await prisma.integration.update({
         where: { id: integration.id },
-        data: {
-          accessToken: encrypt(newTokens.access_token),
-          refreshToken: encrypt(newTokens.refresh_token),
-          tokenExpiresAt: new Date(Date.now() + newTokens.expires_in * 1000),
-        },
-      })
+        data: { integrationData: hubSpotData, updatedAt: new Date() },
+      });
+      console.log("HubSpot data successfully stored for user:", userId);
+    } else {
+      console.error("No integration record found for user:", userId);
     }
-
-    const hubSpotData = await fetchHubSpotMetrics(accessToken)
-
-    if (!hubSpotData) {
-      console.error("Failed to fetch data from HubSpot")
-      return
-    }
-
-    await prisma.integration.update({
-      where: { id: integration.id },
-      data: { integrationData: hubSpotData, updatedAt: new Date() },
-    })
-
-    console.log("HubSpot data successfully stored for user:", userId)
   } catch (error: any) {
-    console.error("Error processing HubSpot data:", error.message)
-    throw error
+    console.error("Error processing HubSpot data:", error.message);
+    throw error;
   }
 }
 
-async function refreshHubSpotToken(refreshToken: string) {
-  const tokenUrl = "https://api.hubapi.com/oauth/v1/token"
-  const clientId = process.env.HUBSPOT_CLIENT_ID
-  const clientSecret = process.env.HUBSPOT_CLIENT_SECRET
-
-  if (!clientId || !clientSecret) {
-    throw new Error("Missing HubSpot client credentials")
-  }
-
-  try {
-    const response = await axios.post(
-      tokenUrl,
-      new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: decrypt(refreshToken),
-        client_id: clientId,
-        client_secret: clientSecret,
-      }).toString(),
-      {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-      },
-    )
-
-    return response.data
-  } catch (error) {
-    console.error("Error refreshing HubSpot token:", error)
-    throw error
-  }
+async function fetchHubSpotReferralRate(accessToken: string) {
+  return fetchHubSpotMetric(accessToken, "referral_rate");
 }
 
-async function fetchHubSpotMetrics(accessToken: string) {
+async function fetchHubSpotDemos(accessToken: string) {
+  return fetchHubSpotMetric(accessToken, "demos");
+}
+
+async function fetchHubSpotLeadConversions(accessToken: string) {
+  return fetchHubSpotMetric(accessToken, "lead_conversions");
+}
+
+async function fetchHubSpotCommissions(accessToken: string) {
+  return fetchHubSpotMetric(accessToken, "commissions");
+}
+
+async function fetchHubSpotMetric(accessToken: string, metric: string) {
   try {
-    console.log("Fetching HubSpot metrics")
-
-    const endDate = new Date()
-    const startDate = new Date(endDate.getTime() - 90 * 24 * 60 * 60 * 1000) // 90 days ago
-
-    // Fetch contacts to calculate referral rate
-    const contactsResponse = await axios.get("https://api.hubapi.com/crm/v3/objects/contacts", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      params: {
-        limit: 100,
-        properties: ["createdate", "lifecyclestage"],
+    console.log(`Fetching ${metric} from HubSpot`);
+    const response = await axios.get(`https://api.hubapi.com/analytics/v2/reports/${metric}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
       },
-    })
-    const contacts = contactsResponse.data.results
-
-    // Fetch deals to calculate demos and lead conversions
-    const dealsResponse = await axios.get("https://api.hubapi.com/crm/v3/objects/deals", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      params: {
-        limit: 100,
-        properties: ["createdate", "dealstage", "amount"],
-      },
-    })
-    const deals = dealsResponse.data.results
-
-    // Generate daily data
-    const dailyData = []
-    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-      const date = d.toISOString().split("T")[0]
-      const dayContacts = contacts.filter(
-        (c: any) => new Date(c.properties.createdate).toISOString().split("T")[0] === date,
-      )
-      const dayDeals = deals.filter((d: any) => new Date(d.properties.createdate).toISOString().split("T")[0] === date)
-
-      const referrals = dayContacts.filter((c: any) => c.properties.lifecyclestage === "marketingqualifiedlead").length
-      const referralRate = dayContacts.length > 0 ? (referrals / dayContacts.length) * 100 : 0
-      const demos = dayDeals.filter((d: any) => d.properties.dealstage === "presentationscheduled").length
-      const closedDeals = dayDeals.filter((d: any) => d.properties.dealstage === "closedwon").length
-      const leadConversions = dayDeals.length > 0 ? (closedDeals / dayDeals.length) * 100 : 0
-      const revenue = dayDeals.reduce(
-        (sum: number, deal: any) => sum + (Number.parseFloat(deal.properties.amount) || 0),
-        0,
-      )
-      const commissions = closedDeals * 100 // Assuming $100 commission per closed deal
-
-      dailyData.push({
-        date,
-        referralRate: referralRate.toFixed(2),
-        demos,
-        leadConversions: leadConversions.toFixed(2),
-        revenue: revenue.toFixed(2),
-        commissions: commissions.toFixed(2),
-      })
-    }
-
-    return dailyData
+    });
+    return response.data || null;
   } catch (error: any) {
-    console.error("Error fetching HubSpot metrics:", error.response?.data || error.message)
-    throw error
+    console.error(`Error fetching ${metric} from HubSpot:`, error.response?.data || error.message);
+    return null;
   }
 }
 
+function calculateHubSpotMetrics(startDate: Date, endDate: Date, referralRate: any, demos: any, leadConversions: any, commissions: any) {
+  const hubSpotMetrics: any[] = [];
+
+  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+    const date = d.toISOString().split("T")[0];
+    hubSpotMetrics.push({
+      date,
+      referralRate: referralRate?.[date] ?? null,
+      demos: demos?.[date] ?? null,
+      leadConversions: leadConversions?.[date] ?? null,
+      commissions: commissions?.[date] ?? null,
+    });
+  }
+
+  return hubSpotMetrics;
+}
+
+function getCurrentDate(): string {
+  return new Date().toISOString().split("T")[0];
+}
+
+function getStartDate(daysAgo: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  return date.toISOString().split("T")[0];
+}

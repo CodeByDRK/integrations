@@ -72,6 +72,7 @@ export async function GET(req: NextRequest) {
           tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
           realmId,
           updatedAt: new Date(),
+          connectedStatus: true, // Set connectedStatus to true
         },
       })
     } else {
@@ -84,19 +85,26 @@ export async function GET(req: NextRequest) {
           tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
           realmId,
           updatedAt: new Date(),
+          connectedStatus: true, // Set connectedStatus to true
         },
       })
     }
 
     // Attempt to fetch and store financial data
+    let fetchErrorMessage = null
     try {
       await fetchAndStoreFinancialData(userId, realmId, access_token)
     } catch (fetchError) {
       console.error("Error fetching financial data:", fetchError)
-      // Continue with the flow even if fetching financial data fails
+      fetchErrorMessage = "Error fetching financial data, but the connection was successful."
     }
 
-    return new NextResponse("<html><body><div>QuickBooks connected successfully</div></body></html>", {
+    // Return a response with the fetch error message if there was one
+    const successMessage = fetchErrorMessage
+      ? `<html><body><div>QuickBooks connected successfully, but there was an error fetching financial data: ${fetchErrorMessage}</div></body></html>`
+      : `<html><body><div>QuickBooks connected successfully</div></body></html>`
+
+    return new NextResponse(successMessage, {
       headers: { "Content-Type": "text/html" },
     })
   } catch (error: any) {
@@ -104,4 +112,3 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ message: "Error processing request", details: error.message }, { status: 500 })
   }
 }
-
