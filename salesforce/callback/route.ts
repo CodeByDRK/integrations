@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import axios from "axios"
 import prisma from "@/lib/prisma"
 import { stackServerApp } from "@/stack"
+import { fetchAndStoreSalesforceData } from "./salesforceService"
 
 export async function GET(req: Request) {
   const user = await stackServerApp.getUser()
@@ -59,11 +60,6 @@ export async function GET(req: Request) {
 
     const { access_token, refresh_token, instance_url } = tokenResponse.data
 
-    // Fetch Salesforce data (example, adjust as needed)
-    const salesforceResponse = await axios.get(`${instance_url}/services/data/v52.0/sobjects/Account/describe`, {
-      headers: { Authorization: `Bearer ${access_token}` },
-    })
-
     let integration = await prisma.integration.findFirst({
       where: { userId, integrationType: "SALESFORCE" },
     })
@@ -76,7 +72,6 @@ export async function GET(req: Request) {
           refreshToken: refresh_token,
           instanceUrl: instance_url,
           connectedStatus: true,
-          integrationData: salesforceResponse.data,
         },
       })
     } else {
@@ -88,10 +83,18 @@ export async function GET(req: Request) {
           refreshToken: refresh_token,
           instanceUrl: instance_url,
           connectedStatus: true,
-          integrationData: salesforceResponse.data,
           updatedAt: new Date(),
         },
       })
+    }
+
+    // Fetch and store Salesforce data
+    try {
+      await fetchAndStoreSalesforceData(userId, access_token, instance_url)
+      console.log("Successfully fetched and stored Salesforce data")
+    } catch (error) {
+      console.error("Error fetching Salesforce data:", error)
+      // Continue the flow even if Salesforce data fetching fails
     }
 
     return new NextResponse(renderSuccessHtml(), {

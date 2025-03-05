@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
 
     console.log("Token Response Data:", tokenResponse.data)
 
-    const { access_token, refresh_token, workspace_id, expires_in } = tokenResponse.data
+    const { access_token, workspace_id, owner } = tokenResponse.data
 
     // Fetch Notion workspace data to get pageId, blockId, and databaseId
     let workspaceData
@@ -83,12 +83,6 @@ export async function GET(req: NextRequest) {
     } catch (error) {
       console.error("Error fetching Notion workspace data:", error)
       workspaceData = { pageId: null, blockId: null, databaseId: null }
-    }
-
-    // Calculate token expiration time
-    let tokenExpiresAt = null
-    if (expires_in && !isNaN(expires_in)) {
-      tokenExpiresAt = new Date(Date.now() + expires_in * 1000)
     }
 
     let integration = await prisma.integration.findFirst({
@@ -100,8 +94,6 @@ export async function GET(req: NextRequest) {
         where: { id: integration.id },
         data: {
           accessToken: access_token,
-          refreshToken: refresh_token ? refresh_token : null,
-          tokenExpiresAt,
           workSpaceId: workspace_id,
           pageId: workspaceData.pageId,
           blockId: workspaceData.blockId,
@@ -115,8 +107,6 @@ export async function GET(req: NextRequest) {
           userId,
           integrationType: "NOTION",
           accessToken: access_token,
-          refreshToken: refresh_token ? refresh_token : null,
-          tokenExpiresAt,
           workSpaceId: workspace_id,
           pageId: workspaceData.pageId,
           blockId: workspaceData.blockId,
@@ -232,5 +222,6 @@ function renderSuccessHtml() {
         <script>setTimeout(() => window.close(), 5000);</script>
       </body>
     </html>
-  `;
+  `
 }
+

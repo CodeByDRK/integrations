@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server"
 import axios from "axios"
 import prisma from "@/lib/prisma"
 import { stackServerApp } from "@/stack"
-import { fetchAndStoreFinancialData } from "./financialService"
+import { fetchAndStoreQuickBooksFinancialData } from "./financialService"
 
 export async function GET(req: NextRequest) {
   const user = await stackServerApp.getUser()
@@ -92,7 +92,7 @@ export async function GET(req: NextRequest) {
     // Attempt to fetch and store financial data
     let fetchErrorMessage = null
     try {
-      await fetchAndStoreFinancialData(userId, realmId, access_token)
+      await fetchAndStoreQuickBooksFinancialData(userId, realmId, access_token)
     } catch (fetchError) {
       console.error("Error fetching financial data:", fetchError)
       fetchErrorMessage = "Error fetching financial data, but the connection was successful."
@@ -111,3 +111,4 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ message: "Error processing request", details: error.message }, { status: 500 })
   }
 }
+

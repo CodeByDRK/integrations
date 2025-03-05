@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import axios from "axios"
 import prisma from "@/lib/prisma"
 import { stackServerApp } from "@/stack"
+import { fetchAndStoreSlackData } from "./slackService"
 
 export async function GET(req: Request) {
   const url = new URL(req.url)
@@ -48,14 +49,7 @@ export async function GET(req: Request) {
       },
     })
 
-    const { access_token, team, authed_user } = tokenResponse.data
-
-    // Fetch additional team info
-    const teamInfoResponse = await axios.get("https://slack.com/api/team.info", {
-      headers: { Authorization: `Bearer ${access_token}` },
-    })
-
-    const teamData = teamInfoResponse.data.team
+    const { access_token, team } = tokenResponse.data
 
     let integration = await prisma.integration.findFirst({
       where: { userId, integrationType: "SLACK" },
@@ -81,6 +75,15 @@ export async function GET(req: Request) {
           updatedAt: new Date(),
         },
       })
+    }
+
+    // Fetch and store Slack data
+    try {
+      await fetchAndStoreSlackData(userId, access_token, team.id)
+      console.log("Successfully fetched and stored Slack data")
+    } catch (error) {
+      console.error("Error fetching Slack data:", error)
+      // Continue the flow even if Slack data fetching fails
     }
 
     return new NextResponse(renderSuccessHtml(), {

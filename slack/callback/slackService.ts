@@ -21,9 +21,9 @@ interface FinancialMetrics {
   commissions: number | null
 }
 
-export async function fetchAndStoreHubSpotData(userId: string, accessToken: string, hubId: string): Promise<void> {
+export async function fetchAndStoreSlackData(userId: string, accessToken: string, teamId: string): Promise<void> {
   try {
-    console.log("Fetching data from HubSpot API...")
+    console.log("Fetching data from Slack API...")
 
     // Initialize the financial metrics structure with all null values
     const financialMetrics: FinancialMetrics = {
@@ -45,69 +45,56 @@ export async function fetchAndStoreHubSpotData(userId: string, accessToken: stri
       commissions: null,
     }
 
-    // Fetch deals from HubSpot to calculate revenue
-    const dealsResponse = await axios.get("https://api.hubapi.com/crm/v3/objects/deals", {
+    // Fetch users to calculate user growth
+    const usersResponse = await axios.get("https://slack.com/api/users.list", {
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      params: {
-        limit: 100,
-        properties: ["amount", "closedate"],
-        archived: false,
       },
     })
 
-    if (dealsResponse.data && dealsResponse.data.results) {
-      const deals = dealsResponse.data.results
-      const totalRevenue = deals.reduce((sum: number, deal: any) => {
-        const amount = Number.parseFloat(deal.properties.amount)
-        return !isNaN(amount) ? sum + amount : sum
-      }, 0)
-      financialMetrics.revenue = totalRevenue
+    if (usersResponse.data && usersResponse.data.members) {
+      financialMetrics.userGrowth = usersResponse.data.members.length
     }
 
-    // Fetch contacts to calculate user growth
-    const contactsResponse = await axios.get("https://api.hubapi.com/crm/v3/objects/contacts", {
+    // Fetch channels to estimate activity
+    const channelsResponse = await axios.get("https://slack.com/api/conversations.list", {
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
       },
       params: {
-        limit: 100,
-        properties: ["createdate"],
-        archived: false,
+        types: "public_channel,private_channel",
       },
     })
 
-    if (contactsResponse.data && contactsResponse.data.results) {
-      const contacts = contactsResponse.data.results
-      const totalContacts = contacts.length
-      financialMetrics.userGrowth = totalContacts
+    if (channelsResponse.data && channelsResponse.data.channels) {
+      const channels = channelsResponse.data.channels
+      let totalMembers = 0
+      channels.forEach((channel: any) => {
+        totalMembers += channel.num_members || 0
+      })
+      financialMetrics.monthlyActiveUsers = totalMembers / channels.length // Average members per channel as a proxy for active users
     }
 
-    // Fetch companies to calculate lead conversions
-    const companiesResponse = await axios.get("https://api.hubapi.com/crm/v3/objects/companies", {
+    // Fetch team info
+    const teamInfoResponse = await axios.get("https://slack.com/api/team.info", {
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
       },
       params: {
-        limit: 100,
-        properties: ["createdate"],
-        archived: false,
+        team: teamId,
       },
     })
 
-    if (companiesResponse.data && companiesResponse.data.results) {
-      const companies = companiesResponse.data.results
-      financialMetrics.leadConversions = companies.length
+    if (teamInfoResponse.data && teamInfoResponse.data.team) {
+      const team = teamInfoResponse.data.team
+      // You could use the team.created timestamp to calculate the team's age
+      // and potentially derive some growth or retention metrics
     }
 
     // Update the integration with the fetched data and add to datatrails
     const currentDate = new Date()
     const datatrailEntry = {
-      event: "HubSpot data fetched",
+      event: "Slack data fetched",
       timestamp: currentDate.toISOString(),
       details: {
         fieldsPopulated: Object.entries(financialMetrics)
@@ -125,7 +112,7 @@ export async function fetchAndStoreHubSpotData(userId: string, accessToken: stri
       where: {
         id: (
           await prisma.integration.findFirst({
-            where: { userId, integrationType: "HUBSPOT" },
+            where: { userId, integrationType: "SLACK" },
           })
         )?.id,
       },
@@ -138,9 +125,9 @@ export async function fetchAndStoreHubSpotData(userId: string, accessToken: stri
       },
     })
 
-    console.log("HubSpot data stored successfully")
+    console.log("Slack data stored successfully")
   } catch (error) {
-    console.error("Error fetching or storing HubSpot data:", error)
+    console.error("Error fetching or storing Slack data:", error)
     throw error
   }
 }

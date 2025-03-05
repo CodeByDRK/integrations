@@ -105,7 +105,18 @@ export async function GET(req: NextRequest) {
           refreshToken: refresh_token,
           tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
           tenantId,
-          connectedStatus: true, // Set connectedStatus to true
+          connectedStatus: true,
+          datatrails: {
+            push: {
+              event: "Xero connected",
+              timestamp: new Date().toISOString(),
+              details: {
+                tenantId,
+                connectionStatus: "success",
+              },
+            },
+          },
+          updatedAt: new Date(),
         },
       })
     } else {
@@ -117,7 +128,17 @@ export async function GET(req: NextRequest) {
           refreshToken: refresh_token,
           tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
           tenantId,
-          connectedStatus: true, // Set connectedStatus to true
+          connectedStatus: true,
+          datatrails: [
+            {
+              event: "Xero connected",
+              timestamp: new Date().toISOString(),
+              details: {
+                tenantId,
+                connectionStatus: "success",
+              },
+            },
+          ],
           updatedAt: new Date(),
         },
       })
@@ -152,3 +173,4 @@ export async function GET(req: NextRequest) {
     )
   }
 }
+
