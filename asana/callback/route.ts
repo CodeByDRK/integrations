@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server"
 import axios from "axios"
 import prisma from "@/lib/prisma"
-import { encrypt } from "../../utils/encryption"
 
 export async function GET(req: Request) {
   const url = new URL(req.url)
@@ -90,8 +89,8 @@ export async function POST(req: Request) {
       integration = await prisma.integration.update({
         where: { id: integration.id },
         data: {
-          accessToken: encrypt(accessToken),
-          refreshToken: encrypt(refreshToken),
+          accessToken: accessToken,
+          refreshToken: refreshToken,
           tokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
           workSpaceId: workspaceId,
           connectedStatus: true,
@@ -102,8 +101,8 @@ export async function POST(req: Request) {
         data: {
           userId,
           integrationType: "ASANA",
-          accessToken: encrypt(accessToken),
-          refreshToken: encrypt(refreshToken),
+          accessToken: accessToken,
+          refreshToken: refreshToken,
           tokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
           workSpaceId: workspaceId,
           connectedStatus: true,

@@ -1,10 +1,10 @@
-import { NextResponse } from "next/server";
+// app/api/calendly/callback/route.ts
+import { type NextRequest, NextResponse } from "next/server";
 import axios from "axios";
 import prisma from "@/lib/prisma";
 import { stackServerApp } from "@/stack";
-import { fetchAndStoreHubSpotData } from "./hubspotService"; // Import the function
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const user = await stackServerApp.getUser();
   if (!user) {
     console.error("Unauthorized: No user found");
@@ -12,35 +12,35 @@ export async function GET(req: Request) {
   }
 
   const userId = user.id;
-  const url = new URL(req.url);
-  const error = url.searchParams.get("error");
-  const authCode = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
+  const searchParams = req.nextUrl.searchParams;
+  const error = searchParams.get("error");
+  const code = searchParams.get("code");
+  const state = searchParams.get("state");
 
-  console.log("Received OAuth Parameters:", { authCode, state });
+  console.log("Received OAuth Parameters:", { code, state });
 
   if (error) {
-    console.error("OAuth Error:", error, url.searchParams.get("error_description"));
+    console.error("OAuth Error:", error, searchParams.get("error_description"));
     return NextResponse.json(
       {
         message: "Authorization Error",
         error,
-        error_description: url.searchParams.get("error_description"),
+        error_description: searchParams.get("error_description"),
       },
       { status: 400 }
     );
   }
 
-  if (!authCode || !state) {
-    console.error("Missing required parameters: authCode or state is null");
+  if (!code || !state) {
+    console.error("Missing required parameters: code or state is null");
     return NextResponse.json({ message: "Missing required parameters" }, { status: 400 });
   }
 
   try {
-    const tokenUrl = "https://api.hubapi.com/oauth/v1/token";
-    const redirectUri = process.env.HUBSPOT_REDIRECT_URI;
-    const clientId = process.env.HUBSPOT_INTEGRATION_CLIENT_ID;
-    const clientSecret = process.env.HUBSPOT_INTEGRATION_CLIENT_SECRET;
+    const tokenUrl = "https://auth.calendly.com/oauth/token";
+    const redirectUri = process.env.CALENDLY_REDIRECT_URI;
+    const clientId = process.env.CALENDLY_CLIENT_ID;
+    const clientSecret = process.env.CALENDLY_CLIENT_SECRET;
 
     console.log("Environment Variables Check:", {
       redirectUri,
@@ -52,15 +52,15 @@ export async function GET(req: Request) {
       throw new Error("Missing required environment variables");
     }
 
-    // Exchange auth code for access token
+    // Exchange the authorization code for an access token
     const tokenResponse = await axios.post(
       tokenUrl,
       new URLSearchParams({
-        grant_type: "authorization_code",
         client_id: clientId,
         client_secret: clientSecret,
+        code,
         redirect_uri: redirectUri,
-        code: authCode,
+        grant_type: "authorization_code",
       }).toString(),
       {
         headers: {
@@ -73,18 +73,19 @@ export async function GET(req: Request) {
 
     const { access_token, refresh_token, expires_in } = tokenResponse.data;
 
-    // Fetch HubSpot account details to get hubId
-    const hubspotAccountInfoUrl = `https://api.hubapi.com/oauth/v1/access-tokens/${access_token}`;
-    const accountInfoResponse = await axios.get(hubspotAccountInfoUrl, {
+    // Fetch user information from Calendly
+    const userInfoUrl = "https://api.calendly.com/users/me";
+    const userInfoResponse = await axios.get(userInfoUrl, {
       headers: { Authorization: `Bearer ${access_token}` },
     });
 
-    const { hub_id } = accountInfoResponse.data;
-    console.log("HubSpot Account Info:", accountInfoResponse.data);
+    console.log("Calendly User Info Response:", userInfoResponse.data);
 
-    // Save to the database
+    const calendlyUserId = userInfoResponse.data.resource.uri;
+
+    // Store the token in the database
     let integration = await prisma.integration.findFirst({
-      where: { userId, integrationType: "HUBSPOT" },
+      where: { userId, integrationType: "CALENDLY" },
     });
 
     if (integration) {
@@ -95,34 +96,25 @@ export async function GET(req: Request) {
           refreshToken: refresh_token,
           tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
           connectedStatus: true,
-          hubId: hub_id?.toString() || null, // Save hubId
         },
       });
     } else {
       integration = await prisma.integration.create({
         data: {
           userId,
-          integrationType: "HUBSPOT",
+          integrationType: "CALENDLY",
           accessToken: access_token,
           refreshToken: refresh_token,
           tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
           connectedStatus: true,
-          hubId: hub_id?.toString() || null, // Save hubId
           updatedAt: new Date(),
         },
       });
     }
 
-    // Fetch and store HubSpot data
-    try {
-      await fetchAndStoreHubSpotData(userId, access_token, hub_id);
-      console.log("Successfully fetched and stored HubSpot data");
-    } catch (error) {
-      console.error("Error fetching HubSpot data:", error);
-      // Continue the flow even if HubSpot data fetching fails
-    }
+    const successMessage = `<html><body><div>Calendly connected successfully</div></body></html>`;
 
-    return new NextResponse(renderSuccessHtml(), {
+    return new NextResponse(successMessage, {
       headers: { "Content-Type": "text/html" },
     });
   } catch (error: any) {
@@ -135,15 +127,4 @@ export async function GET(req: Request) {
       { status: 500 }
     );
   }
-}
-
-function renderSuccessHtml() {
-  return `
-    <html>
-      <body>
-        <div>HubSpot connected successfully</div>
-        <script>setTimeout(() => window.close(), 5000);</script>
-      </body>
-    </html>
-  `;
 }

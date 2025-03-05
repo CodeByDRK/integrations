@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server"
 import axios from "axios"
 import prisma from "@/lib/prisma"
-import { encrypt } from "../../utils/encryption"
 import { stackServerApp } from "@/stack"
 
 export async function GET(req: Request) {
@@ -66,7 +65,7 @@ export async function GET(req: Request) {
       integration = await prisma.integration.update({
         where: { id: integration.id },
         data: {
-          accessToken: encrypt(access_token),
+          accessToken: access_token,
           workSpaceId: team.id,
           connectedStatus: true,
         },
@@ -76,7 +75,7 @@ export async function GET(req: Request) {
         data: {
           userId,
           integrationType: "SLACK",
-          accessToken: encrypt(access_token),
+          accessToken: access_token,
           workSpaceId: team.id,
           connectedStatus: true,
           updatedAt: new Date(),

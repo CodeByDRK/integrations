@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import axios from "axios"
 import prisma from "@/lib/prisma"
-import { encrypt } from "../../utils/encryption"
 import { stackServerApp } from "@/stack"
 import { fetchAndStoreFinancialData } from "./financialService"
 
@@ -67,8 +66,8 @@ export async function GET(req: NextRequest) {
       integration = await prisma.integration.update({
         where: { id: integration.id },
         data: {
-          accessToken: encrypt(access_token),
-          refreshToken: encrypt(refresh_token),
+          accessToken: access_token,
+          refreshToken: refresh_token,
           tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
           realmId,
           updatedAt: new Date(),
@@ -80,8 +79,8 @@ export async function GET(req: NextRequest) {
         data: {
           userId,
           integrationType: "QUICKBOOKS",
-          accessToken: encrypt(access_token),
-          refreshToken: encrypt(refresh_token),
+          accessToken: access_token,
+          refreshToken: refresh_token,
           tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
           realmId,
           updatedAt: new Date(),

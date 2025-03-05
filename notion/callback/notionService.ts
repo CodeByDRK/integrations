@@ -2,7 +2,7 @@ import axios from "axios"
 import prisma from "@/lib/prisma"
 import { decrypt } from "../../utils/encryption"
 
-export async function fetchAndStoreNotionData(userId: string) {
+export async function fetchAndStoreNotionData(userId: string, access_token: any) {
   try {
     console.log("Fetching Notion data for user:", userId)
 

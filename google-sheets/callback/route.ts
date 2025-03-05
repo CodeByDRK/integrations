@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server"
 import axios from "axios"
 import prisma from "@/lib/prisma"
-import { encrypt } from "../../utils/encryption"
 import { stackServerApp } from "@/stack"
 
 export async function GET(req: Request) {
@@ -81,8 +80,8 @@ export async function GET(req: Request) {
       integration = await prisma.integration.update({
         where: { id: integration.id },
         data: {
-          accessToken: encrypt(access_token),
-          refreshToken: encrypt(refresh_token),
+          accessToken: access_token,
+          refreshToken: refresh_token,
           tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
           connectedStatus: true,
         },
@@ -93,8 +92,8 @@ export async function GET(req: Request) {
         data: {
           userId,
           integrationType: "GOOGLE_SHEETS",
-          accessToken: encrypt(access_token),
-          refreshToken: encrypt(refresh_token),
+          accessToken: access_token,
+          refreshToken: refresh_token,
           tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
           connectedStatus: true,
           updatedAt: new Date(),

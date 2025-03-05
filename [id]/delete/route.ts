@@ -9,7 +9,11 @@ export async function DELETE(request: Request, { params }: { params: { id: strin
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const integrationId = params.id
+    const integrationId = Number.parseInt(params.id, 10)
+
+    if (isNaN(integrationId)) {
+      return NextResponse.json({ error: "Invalid integration ID" }, { status: 400 })
+    }
 
     const deletedIntegration = await prisma.integration.deleteMany({
       where: {
