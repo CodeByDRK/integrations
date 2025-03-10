@@ -2,18 +2,13 @@ import { NextResponse } from "next/server"
 import axios from "axios"
 import prisma from "@/lib/prisma"
 import { stackServerApp } from "@/stack"
+import { fetchAndStoreGoogleSheetsData } from "./googleSheetsService"
 
 export async function GET(req: Request) {
   const url = new URL(req.url)
   const error = url.searchParams.get("error")
   const code = url.searchParams.get("code")
   const state = url.searchParams.get("state")
-
-  console.log("Received callback with params:", {
-    error,
-    code: code ? "Set" : "Missing",
-    state: state ? "Set" : "Missing",
-  })
 
   if (error) {
     console.error("Authorization Error:", error, url.searchParams.get("error_description"))
@@ -28,7 +23,7 @@ export async function GET(req: Request) {
   }
 
   if (!code || !state) {
-    console.error("Missing required parameters:", { code: !code, state: !state })
+    console.error("Missing required parameters")
     return NextResponse.json({ message: "Missing required parameters" }, { status: 400 })
   }
 
@@ -44,22 +39,6 @@ export async function GET(req: Request) {
     const clientSecret = process.env.GOOGLESHEETS_INTEGRATION_CLIENT_SECRET
     const redirectUri = process.env.GOOGLESHEETS_REDIRECT_URI
 
-    console.log("Environment variables check:", {
-      clientId: clientId ? "Set" : "Missing",
-      clientSecret: clientSecret ? "Set" : "Missing",
-      redirectUri: redirectUri ? "Set" : "Missing",
-    })
-
-    if (!clientId || !clientSecret || !redirectUri) {
-      console.error("Missing required environment variables:", {
-        clientId: !clientId,
-        clientSecret: !clientSecret,
-        redirectUri: !redirectUri,
-      })
-      throw new Error("Missing required environment variables")
-    }
-
-    console.log("Exchanging code for token...")
     const tokenResponse = await axios.post("https://oauth2.googleapis.com/token", {
       code,
       client_id: clientId,
@@ -68,7 +47,6 @@ export async function GET(req: Request) {
       grant_type: "authorization_code",
     })
 
-    console.log("Token received successfully")
     const { access_token, refresh_token, expires_in } = tokenResponse.data
 
     let integration = await prisma.integration.findFirst({
@@ -76,7 +54,6 @@ export async function GET(req: Request) {
     })
 
     if (integration) {
-      console.log("Updating existing integration...")
       integration = await prisma.integration.update({
         where: { id: integration.id },
         data: {
@@ -87,7 +64,6 @@ export async function GET(req: Request) {
         },
       })
     } else {
-      console.log("Creating new integration...")
       integration = await prisma.integration.create({
         data: {
           userId,
@@ -101,13 +77,21 @@ export async function GET(req: Request) {
       })
     }
 
-    console.log("Integration saved successfully")
+    // Fetch and store Google Sheets data
+    try {
+      await fetchAndStoreGoogleSheetsData(userId, access_token)
+      console.log("Successfully fetched and stored Google Sheets data")
+    } catch (error) {
+      console.error("Error fetching Google Sheets data:", error)
+      // Continue the flow even if data fetching fails
+    }
 
-    return new NextResponse(renderSuccessHtml(), {
+    const successMessage = `<html><body><div>Google Sheets connected successfully</div></body></html>`
+    return new NextResponse(successMessage, {
       headers: { "Content-Type": "text/html" },
     })
   } catch (error: any) {
-    console.error("Error processing request:", error.response?.data || error.message)
+    console.error("Error:", error.response?.data || error.message)
     return NextResponse.json(
       {
         message: "Error processing request",
@@ -116,21 +100,5 @@ export async function GET(req: Request) {
       { status: 500 },
     )
   }
-}
-
-function renderSuccessHtml() {
-  return `
-    <html>
-      <body>
-        <div>Google Sheets connected successfully</div>
-        <script>
-          setTimeout(() => {
-            window.opener.postMessage({ type: 'GOOGLE_SHEETS_INTEGRATION_COMPLETE' }, '*');
-            window.close();
-          }, 3000);
-        </script>
-      </body>
-    </html>
-  `
 }
 

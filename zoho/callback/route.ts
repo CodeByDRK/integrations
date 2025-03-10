@@ -1,80 +1,171 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import crypto from "crypto";
-import { stackServerApp } from "@/stack";
+import { type NextRequest, NextResponse } from "next/server"
+import axios from "axios"
+import prisma from "@/lib/prisma"
+import { stackServerApp } from "@/stack"
+import { fetchAndStoreZohoData } from "./zohoService"
 
 export async function GET(req: NextRequest) {
-  const user = await stackServerApp.getUser();
+  const user = await stackServerApp.getUser()
   if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    console.error("Unauthorized: No user found")
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
-  
-  const clientId = process.env.ZOHO_CLIENT_ID;
-  const redirectUri = process.env.ZOHO_REDIRECT_URI;
-  const scope = "ZohoCRM.modules.ALL";
 
-  if (!clientId || !redirectUri) {
-    console.error("Missing required environment variables");
+  const userId = user.id
+  const searchParams = req.nextUrl.searchParams
+  const error = searchParams.get("error")
+  const authCode = searchParams.get("code")
+  const state = searchParams.get("state")
+
+  console.log("Received OAuth Parameters:", { authCode, state })
+
+  if (error) {
+    console.error("OAuth Error:", error, searchParams.get("error_description"))
     return NextResponse.json(
-      { message: "Server configuration error" },
-      { status: 500 }
-    );
+      {
+        message: "Authorization Error",
+        error,
+        error_description: searchParams.get("error_description"),
+      },
+      { status: 400 },
+    )
   }
 
-  const csrfToken = crypto.randomBytes(16).toString("hex");
-  const state = JSON.stringify({ csrfToken });
+  if (!authCode || !state) {
+    console.error("Missing required parameters: authCode or state is null")
+    return NextResponse.json({ message: "Missing required parameters" }, { status: 400 })
+  }
 
-  const authUrl = new URL("https://accounts.zoho.com/oauth/v2/auth");
-  authUrl.searchParams.append("client_id", clientId);
-  authUrl.searchParams.append("response_type", "code");
-  authUrl.searchParams.append("redirect_uri", redirectUri);
-  authUrl.searchParams.append("scope", scope);
-  authUrl.searchParams.append("access_type", "offline");
-  authUrl.searchParams.append("state", state);
+  try {
+    const tokenUrl = "https://accounts.zoho.com/oauth/v2/token"
+    const redirectUri = process.env.ZOHO_REDIRECT_URI
+    const clientId = process.env.ZOHO_CLIENT_ID
+    const clientSecret = process.env.ZOHO_CLIENT_SECRET
 
-  return NextResponse.redirect(authUrl.toString());
+    console.log("Environment Variables Check:", {
+      redirectUri,
+      clientId,
+      clientSecret: clientSecret ? "Exists" : "Missing",
+    })
+
+    if (!redirectUri || !clientId || !clientSecret) {
+      throw new Error("Missing required environment variables")
+    }
+
+    console.log("Sending token request to Zoho with:", {
+      grant_type: "authorization_code",
+      code: authCode,
+      redirect_uri: redirectUri,
+      client_id: clientId,
+    })
+
+    const tokenResponse = await axios.post(
+      tokenUrl,
+      new URLSearchParams({
+        grant_type: "authorization_code",
+        code: authCode,
+        redirect_uri: redirectUri,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }).toString(),
+      {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      },
+    )
+
+    console.log("Token Response Data:", tokenResponse.data)
+
+    const { access_token, refresh_token, expires_in } = tokenResponse.data
+
+    // Get user info from Zoho
+    const userInfoResponse = await axios.get("https://accounts.zoho.com/oauth/user/info", {
+      headers: { Authorization: `Bearer ${access_token}` },
+    })
+
+    console.log("Zoho User Info Response:", userInfoResponse.data)
+
+    const zohoUserId = userInfoResponse.data.ZUID || "unknown"
+
+    let integration = await prisma.integration.findFirst({
+      where: { userId, integrationType: "ZOHO" },
+    })
+
+    if (integration) {
+      integration = await prisma.integration.update({
+        where: { id: integration.id },
+        data: {
+          accessToken: access_token,
+          refreshToken: refresh_token,
+          tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
+          tenantId: zohoUserId, // Using zohoUserId as tenantId for consistency
+          connectedStatus: true,
+          datatrails: {
+            push: {
+              event: "Zoho connected",
+              timestamp: new Date().toISOString(),
+              details: {
+                zohoUserId,
+                connectionStatus: "success",
+              },
+            },
+          },
+          updatedAt: new Date(),
+        },
+      })
+    } else {
+      integration = await prisma.integration.create({
+        data: {
+          userId,
+          integrationType: "ZOHO",
+          accessToken: access_token,
+          refreshToken: refresh_token,
+          tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
+          tenantId: zohoUserId, // Using zohoUserId as tenantId for consistency
+          connectedStatus: true,
+          datatrails: [
+            {
+              event: "Zoho connected",
+              timestamp: new Date().toISOString(),
+              details: {
+                zohoUserId,
+                connectionStatus: "success",
+              },
+            },
+          ],
+          updatedAt: new Date(),
+        },
+      })
+    }
+
+    // Attempt to fetch and store Zoho data
+    let fetchErrorMessage = null
+    try {
+      await fetchAndStoreZohoData(userId, access_token)
+      console.log("Successfully fetched and stored Zoho data")
+    } catch (fetchError) {
+      console.error("Error fetching Zoho data:", fetchError)
+      fetchErrorMessage = "Error fetching Zoho data, but the connection was successful."
+    }
+
+    // Return a response with the fetch error message if there was one
+    const successMessage = fetchErrorMessage
+      ? `<html><body><div>Zoho connected successfully, but there was an error fetching data: ${fetchErrorMessage}</div></body></html>`
+      : `<html><body><div>Zoho connected successfully</div></body></html>`
+
+    return new NextResponse(successMessage, {
+      headers: { "Content-Type": "text/html" },
+    })
+  } catch (error: any) {
+    console.error("Error:", error.response?.data || error.message)
+    return NextResponse.json(
+      {
+        message: "Error processing request",
+        details: error.response?.data || error.message || "Unknown error occurred",
+      },
+      { status: 500 },
+    )
+  }
 }
 
-export async function POST(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const code = searchParams.get("code");
-  const state = searchParams.get("state");
-
-  if (!code || !state) {
-    return NextResponse.json({ error: "Missing authorization code or state" }, { status: 400 });
-  }
-
-  const clientId = process.env.ZOHO_CLIENT_ID;
-  const clientSecret = process.env.ZOHO_CLIENT_SECRET;
-  const redirectUri = process.env.ZOHO_REDIRECT_URI;
-
-  if (!clientId || !clientSecret || !redirectUri) {
-    return NextResponse.json(
-      { error: "Server configuration error" },
-      { status: 500 }
-    );
-  }
-
-  const tokenUrl = "https://accounts.zoho.com/oauth/v2/token";
-  const params = new URLSearchParams({
-    code,
-    client_id: clientId,
-    client_secret: clientSecret,
-    redirect_uri: redirectUri,
-    grant_type: "authorization_code",
-  });
-
-  const tokenResponse = await fetch(tokenUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-  });
-
-  const tokenData = await tokenResponse.json();
-
-  if (!tokenResponse.ok) {
-    return NextResponse.json({ error: "Failed to fetch access token", details: tokenData }, { status: 400 });
-  }
-
-  return NextResponse.json({ message: "Authentication successful", tokenData });
-}

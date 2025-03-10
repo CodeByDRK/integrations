@@ -3,8 +3,9 @@ import prisma from "@/lib/prisma"
 import type { Prisma } from "@prisma/client"
 
 interface FinancialMetrics {
-  revenue: number | null
-  burnRate: number | null
+  date: string
+  revenue: number
+  burnRate: number
   runway: number | null
   fundraising: number | null
   userGrowth: number | null
@@ -29,10 +30,14 @@ export async function fetchAndStoreQuickBooksFinancialData(
   try {
     console.log("Fetching financial data from QuickBooks API...")
 
-    // Initialize the financial metrics structure with all null values
+    const currentDate = new Date()
+    const ninetyDaysAgo = new Date(currentDate.getTime() - 90 * 24 * 60 * 60 * 1000)
+
+    // Initialize the financial metrics structure
     const financialMetrics: FinancialMetrics = {
-      revenue: null,
-      burnRate: null,
+      date: currentDate.toISOString().split("T")[0], // Current date in YYYY-MM-DD format
+      revenue: 0,
+      burnRate: 0,
       runway: null,
       fundraising: null,
       userGrowth: null,
@@ -58,8 +63,8 @@ export async function fetchAndStoreQuickBooksFinancialData(
           Accept: "application/json",
         },
         params: {
-          start_date: new Date(new Date().getFullYear(), 0, 1).toISOString().split("T")[0], // Start of current year
-          end_date: new Date().toISOString().split("T")[0], // Today's date
+          start_date: ninetyDaysAgo.toISOString().split("T")[0],
+          end_date: currentDate.toISOString().split("T")[0],
         },
       },
     )
@@ -71,7 +76,7 @@ export async function fetchAndStoreQuickBooksFinancialData(
       const totalIncomeRow = rows.find((row: any) => row.Summary?.ColData?.[0]?.value === "Total Income")
       if (totalIncomeRow && totalIncomeRow.Summary.ColData[1]) {
         const revenueValue = Number.parseFloat(totalIncomeRow.Summary.ColData[1].value)
-        financialMetrics.revenue = !isNaN(revenueValue) ? revenueValue : null
+        financialMetrics.revenue = !isNaN(revenueValue) ? revenueValue : 0
       }
 
       // Find the total expenses row
@@ -82,7 +87,7 @@ export async function fetchAndStoreQuickBooksFinancialData(
           financialMetrics.burnRate = expensesValue
 
           // Calculate runway if revenue is available
-          if (financialMetrics.revenue !== null) {
+          if (financialMetrics.revenue > 0) {
             const monthlyProfit = financialMetrics.revenue - expensesValue
             if (monthlyProfit < 0 && expensesValue > 0) {
               // Runway in months = current cash / burn rate
@@ -95,18 +100,17 @@ export async function fetchAndStoreQuickBooksFinancialData(
     }
 
     // Update the integration with the financial data and add to datatrails
-    const currentDate = new Date()
     const datatrailEntry = {
       event: "QuickBooks data fetched",
       timestamp: currentDate.toISOString(),
       details: {
         fieldsPopulated: Object.entries(financialMetrics)
-          .filter(([_, value]) => value !== null)
+          .filter(([_, value]) => value !== null && value !== 0)
           .map(([key]) => key),
       },
     }
 
-    // Convert financialMetrics to Prisma.JsonValue
+    // Convert financialMetrics to a plain object that satisfies Prisma.JsonValue
     const integrationData: Prisma.JsonValue = Object.fromEntries(
       Object.entries(financialMetrics).map(([key, value]) => [key, value === null ? null : value]),
     )
@@ -128,7 +132,7 @@ export async function fetchAndStoreQuickBooksFinancialData(
       },
     })
 
-    console.log("Financial data stored successfully")
+    console.log("QuickBooks financial data stored successfully")
   } catch (error) {
     console.error("Error fetching or storing QuickBooks financial data:", error)
     throw error

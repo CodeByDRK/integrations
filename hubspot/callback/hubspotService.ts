@@ -3,8 +3,9 @@ import prisma from "@/lib/prisma"
 import type { Prisma } from "@prisma/client"
 
 interface FinancialMetrics {
-  revenue: number | null
-  burnRate: number | null
+  date: string
+  revenue: number
+  burnRate: number
   runway: number | null
   fundraising: number | null
   userGrowth: number | null
@@ -25,10 +26,14 @@ export async function fetchAndStoreHubSpotData(userId: string, accessToken: stri
   try {
     console.log("Fetching data from HubSpot API...")
 
-    // Initialize the financial metrics structure with all null values
+    const currentDate = new Date()
+    const ninetyDaysAgo = new Date(currentDate.getTime() - 90 * 24 * 60 * 60 * 1000)
+
+    // Initialize the financial metrics structure
     const financialMetrics: FinancialMetrics = {
-      revenue: null,
-      burnRate: null,
+      date: currentDate.toISOString().split("T")[0], // Current date in YYYY-MM-DD format
+      revenue: 0,
+      burnRate: 0,
       runway: null,
       fundraising: null,
       userGrowth: null,
@@ -54,17 +59,26 @@ export async function fetchAndStoreHubSpotData(userId: string, accessToken: stri
       params: {
         limit: 100,
         properties: ["amount", "closedate"],
-        archived: false,
+        filterGroups: [
+          {
+            filters: [
+              {
+                propertyName: "closedate",
+                operator: "GTE",
+                value: ninetyDaysAgo.getTime().toString(),
+              },
+            ],
+          },
+        ],
       },
     })
 
     if (dealsResponse.data && dealsResponse.data.results) {
       const deals = dealsResponse.data.results
-      const totalRevenue = deals.reduce((sum: number, deal: any) => {
+      financialMetrics.revenue = deals.reduce((sum: number, deal: any) => {
         const amount = Number.parseFloat(deal.properties.amount)
         return !isNaN(amount) ? sum + amount : sum
       }, 0)
-      financialMetrics.revenue = totalRevenue
     }
 
     // Fetch contacts to calculate user growth
@@ -76,14 +90,22 @@ export async function fetchAndStoreHubSpotData(userId: string, accessToken: stri
       params: {
         limit: 100,
         properties: ["createdate"],
-        archived: false,
+        filterGroups: [
+          {
+            filters: [
+              {
+                propertyName: "createdate",
+                operator: "GTE",
+                value: ninetyDaysAgo.getTime().toString(),
+              },
+            ],
+          },
+        ],
       },
     })
 
     if (contactsResponse.data && contactsResponse.data.results) {
-      const contacts = contactsResponse.data.results
-      const totalContacts = contacts.length
-      financialMetrics.userGrowth = totalContacts
+      financialMetrics.userGrowth = contactsResponse.data.total
     }
 
     // Fetch companies to calculate lead conversions
@@ -95,28 +117,36 @@ export async function fetchAndStoreHubSpotData(userId: string, accessToken: stri
       params: {
         limit: 100,
         properties: ["createdate"],
-        archived: false,
+        filterGroups: [
+          {
+            filters: [
+              {
+                propertyName: "createdate",
+                operator: "GTE",
+                value: ninetyDaysAgo.getTime().toString(),
+              },
+            ],
+          },
+        ],
       },
     })
 
     if (companiesResponse.data && companiesResponse.data.results) {
-      const companies = companiesResponse.data.results
-      financialMetrics.leadConversions = companies.length
+      financialMetrics.leadConversions = companiesResponse.data.total
     }
 
     // Update the integration with the fetched data and add to datatrails
-    const currentDate = new Date()
     const datatrailEntry = {
       event: "HubSpot data fetched",
       timestamp: currentDate.toISOString(),
       details: {
         fieldsPopulated: Object.entries(financialMetrics)
-          .filter(([_, value]) => value !== null)
+          .filter(([_, value]) => value !== null && value !== 0)
           .map(([key]) => key),
       },
     }
 
-    // Convert financialMetrics to Prisma.JsonValue
+    // Convert financialMetrics to a plain object that satisfies Prisma.JsonValue
     const integrationData: Prisma.JsonValue = Object.fromEntries(
       Object.entries(financialMetrics).map(([key, value]) => [key, value === null ? null : value]),
     )

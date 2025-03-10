@@ -3,8 +3,9 @@ import prisma from "@/lib/prisma"
 import type { Prisma } from "@prisma/client"
 
 interface FinancialMetrics {
-  revenue: number | null
-  burnRate: number | null
+  date: string
+  revenue: number
+  burnRate: number
   runway: number | null
   fundraising: number | null
   userGrowth: number | null
@@ -29,10 +30,14 @@ export async function fetchAndStoreXeroFinancialData(
   try {
     console.log("Fetching financial data from Xero API...")
 
-    // Initialize the financial metrics structure with all null values
+    const currentDate = new Date()
+    const ninetyDaysAgo = new Date(currentDate.getTime() - 90 * 24 * 60 * 60 * 1000)
+
+    // Initialize the financial metrics structure
     const financialMetrics: FinancialMetrics = {
-      revenue: null,
-      burnRate: null,
+      date: currentDate.toISOString().split("T")[0], // Current date in YYYY-MM-DD format
+      revenue: 0,
+      burnRate: 0,
       runway: null,
       fundraising: null,
       userGrowth: null,
@@ -57,11 +62,12 @@ export async function fetchAndStoreXeroFinancialData(
         Accept: "application/json",
       },
       params: {
-        date: new Date().toISOString().split("T")[0], // Today's date
+        fromDate: ninetyDaysAgo.toISOString().split("T")[0],
+        toDate: currentDate.toISOString().split("T")[0],
       },
     })
 
-    // Extract revenue from profit and loss report if available
+    // Extract revenue and expenses from profit and loss report if available
     if (profitAndLossResponse.data && profitAndLossResponse.data.Reports) {
       const report = profitAndLossResponse.data.Reports[0]
 
@@ -78,9 +84,8 @@ export async function fetchAndStoreXeroFinancialData(
         if (revenueRow && revenueRow.Cells) {
           const revenueCell = revenueRow.Cells.find((cell: any) => cell.Value !== undefined)
           if (revenueCell) {
-            // Extract numeric value from string (remove currency symbols, commas, etc.)
             const revenueValue = Number.parseFloat(revenueCell.Value.toString().replace(/[^0-9.-]+/g, ""))
-            financialMetrics.revenue = !isNaN(revenueValue) ? revenueValue : null
+            financialMetrics.revenue = !isNaN(revenueValue) ? revenueValue : 0
           }
         }
       }
@@ -98,19 +103,16 @@ export async function fetchAndStoreXeroFinancialData(
         if (expensesRow && expensesRow.Cells) {
           const expensesCell = expensesRow.Cells.find((cell: any) => cell.Value !== undefined)
           if (expensesCell) {
-            // Extract numeric value from string
             const expensesValue = Number.parseFloat(expensesCell.Value.toString().replace(/[^0-9.-]+/g, ""))
-            if (!isNaN(expensesValue)) {
-              financialMetrics.burnRate = expensesValue
+            financialMetrics.burnRate = !isNaN(expensesValue) ? expensesValue : 0
 
-              // Calculate runway if revenue is available
-              if (financialMetrics.revenue !== null) {
-                const monthlyProfit = financialMetrics.revenue - expensesValue
-                if (monthlyProfit < 0 && expensesValue > 0) {
-                  // Runway in months = current cash / burn rate
-                  // Since we don't have current cash, we'll use a placeholder calculation
-                  financialMetrics.runway = Math.abs(financialMetrics.revenue / expensesValue) * 12
-                }
+            // Calculate runway if revenue is available
+            if (financialMetrics.revenue > 0) {
+              const monthlyProfit = financialMetrics.revenue - financialMetrics.burnRate
+              if (monthlyProfit < 0 && financialMetrics.burnRate > 0) {
+                // Runway in months = current cash / burn rate
+                // Since we don't have current cash, we'll use a placeholder calculation
+                financialMetrics.runway = Math.abs(financialMetrics.revenue / financialMetrics.burnRate) * 12
               }
             }
           }
@@ -119,18 +121,17 @@ export async function fetchAndStoreXeroFinancialData(
     }
 
     // Update the integration with the financial data and add to datatrails
-    const currentDate = new Date()
     const datatrailEntry = {
       event: "Xero data fetched",
       timestamp: currentDate.toISOString(),
       details: {
         fieldsPopulated: Object.entries(financialMetrics)
-          .filter(([_, value]) => value !== null)
+          .filter(([_, value]) => value !== null && value !== 0)
           .map(([key]) => key),
       },
     }
 
-    // Convert financialMetrics to Prisma.JsonValue
+    // Convert financialMetrics to a plain object that satisfies Prisma.JsonValue
     const integrationData: Prisma.JsonValue = Object.fromEntries(
       Object.entries(financialMetrics).map(([key, value]) => [key, value === null ? null : value]),
     )
